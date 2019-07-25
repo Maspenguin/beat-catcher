@@ -1,10 +1,8 @@
-//! The simplest possible example that does something.
-
 extern crate ggez;
 use std::path;
 use std::env;
 extern crate rand;
-use rand::Rng;
+//use rand::Rng;
 use ggez::event;
 use ggez::input;
 use ggez::graphics::{self, Drawable, DrawParam};
@@ -15,6 +13,10 @@ use ggez::audio;
 use ggez::audio::SoundSource;
 use std::io::BufReader;
 use std::fs::File;
+use rustfft::algorithm::DFT;
+use rustfft::FFT;
+use rustfft::num_complex::Complex;
+use rustfft::num_traits::Zero;
 use hound;
 
 enum GameState
@@ -33,20 +35,20 @@ struct State
     img_coolbeans_missed: graphics::Image,
     dtime: std::time::Duration,
     time: std::time::Duration,
-    cursed_entities: Vec<CursedEntity>,
+    beats: Vec<Beat>,
     missed_count: i32,
     paddle_pos_x: f32,
     paddle_pos_y: f32,
     wav_reader: hound::WavReader<BufReader<File>>,
     beat_count: i16,
     music: audio::Source,
-    stage: MenuItem,
+    stage: Option<MenuItem>,
     menu_items: Vec<MenuItem>,
     points: Vec<nalgebra::Point2<f32>>,//diagram plots
     samples_per_point: usize
 }
 
-struct CursedEntity
+struct Beat
 {
     img: graphics::Image,
     pos_x: f32,
@@ -98,21 +100,21 @@ impl State {
             //music: audio::Source::new(ctx, "/music.mp3")?, //145 bpm  // 60/145 seconds between each beat?
             dtime: std::time::Duration::new(0, 0),
             time: std::time::Duration::new(0, 0),
-            cursed_entities: vec!(),//CursedEntity {img: graphics::Image::new(ctx, "/wednesday.png")?, pos_x: 50.0, pos_y: 0.0}
+            beats: vec![],//CursedEntity {img: graphics::Image::new(ctx, "/wednesday.png")?, pos_x: 50.0, pos_y: 0.0}
             missed_count: 0,
             paddle_pos_x: 0.0,
             paddle_pos_y: (graphics::drawable_size(ctx).1 - 130.0) as f32,
-            wav_reader: hound::WavReader::open("resources/music/WalkStabWalk.wav").unwrap(),//DanceOfTheDecorous(Jazz).wav//WalkStabWalk.wav
+            wav_reader: hound::WavReader::open("resources/music/test.wav").unwrap(),//DanceOfTheDecorous(Jazz).wav//WalkStabWalk.wav
             beat_count: 0,
             music: audio::Source::new(ctx, "/music/DanceOfTheProfane.mp3")?,
-            stage: MenuItem{text: "Dance of the Profane".to_string(), pos_x: 200.0, pos_y: 200.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/DanceOfTheProfane.mp3".to_string(), bpm: 145},
-            menu_items: vec!(
+            stage: None,
+            menu_items: vec![
                 MenuItem{text: "Dance of the Profane".to_string(), pos_x: 200.0, pos_y: 200.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/DanceOfTheProfane.mp3".to_string(), bpm: 145},
-                MenuItem{text: "Walk-Stab-Walk".to_string(),       pos_x: 200.0, pos_y: 250.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/WalkStabWalk.mp3".to_string(), bpm: 158},
-                MenuItem{text: "Dance of the Decorous (Jazz)".to_string(), pos_x: 200.0, pos_y: 300.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/DanceOfTheDecorous(Jazz).mp3".to_string(), bpm: 145}
-            ),
-            points: vec!(),
-            samples_per_point: 499//starts from 0
+                MenuItem{text: "Walk-Stab-Walk".to_string(),       pos_x: 200.0, pos_y: 250.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/test.wav".to_string(), bpm: 158},
+                MenuItem{text: "Dance of the Decorous (Jazz)".to_string(), pos_x: 200.0, pos_y: 300.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/DanceOfTheDecorous(Jazz).wav".to_string(), bpm: 145}
+            ],
+            points: vec![],
+            samples_per_point: 370//2000//370//499//starts from 0/40//
         };
         Ok(s)
     }
@@ -136,7 +138,7 @@ impl event::EventHandler for State {
                     if input::mouse::button_pressed(ctx, ggez::input::mouse::MouseButton::Left)
                     {
                         self.game_state = GameState::Game;
-                        self.stage = item.clone();
+                        self.stage = Some(item.clone());
                         self.music = audio::Source::new(ctx, &item.track_name)?;
                         self.paddle_pos_y = (graphics::drawable_size(ctx).1 - 130.0) as f32;
                         
@@ -148,11 +150,35 @@ impl event::EventHandler for State {
                             println!("Len: {}", self.wav_reader.samples::<i16>().len());
                             println!("Len2: {}", self.wav_reader.len());
                             
-                            self.points.push(nalgebra::Point2::new(i as f32, (500 + (next.unwrap().unwrap()/40)) as f32));
+                            self.points.push(nalgebra::Point2::new(i as f32, (500 + (next.unwrap().unwrap()/200)) as f32));//40
                             i += 1;
                         }
+                        let dft = DFT::new(2000, false);
+                        let mut input: Vec<Complex<f32>> = vec![];
+                        for point in &self.points
+                        {
+                            input.push(Complex::new(point.y,0.0));
+                        }
+                        // input[1] = Complex::new(100.0,0.0);
+                        // input[5] = Complex::new(300.0,0.0);
+                        // input[20] = Complex::new(10.0,0.0);
+                        //Zero::zero(); 100
+                        let mut output: Vec<Complex<f32>> = vec![Complex::new(0.0,0.0); 2000];
+                        dft.process(&mut input, &mut output);
+                        //println!("input: {:?}", input);
+                        //println!("output: {:?}", output);
+                        //println!("output: {}", output.len());
+                        // println!("input: {:?}", self.points);
+                        i = 0;
+                        while i < self.points.len()
+                        {
+                            self.points[i] = nalgebra::Point2::new(i as f32, output[i].re+500.0);
+                            i += 1;
+                        }
+                        // println!("output: {:?}", self.points);
+                    
                     }
-                } 
+                }
                 else if item.colour == graphics::Color::new(1.0, 1.0, 1.0, 1.0)
                 {
                     item.colour = graphics::Color::new(0.2, 1.0, 0.2, 1.0);
@@ -162,7 +188,12 @@ impl event::EventHandler for State {
         else if let GameState::Game = self.game_state
         {
             self.paddle_pos_x = input::mouse::position(ctx).x;
-            let beat_length = 60.0/self.stage.bpm as f32;//in seconds
+            let beat_length = 60.0/self.stage.clone().unwrap().bpm as f32;//in seconds
+            // match self.stage {
+            //     Some(ref p) => beat_length = 60.0/p.bpm as f32,//in seconds
+            //     None => println!("Blah")
+            // }
+            
             let required_beats = (self.time.as_millis() as f32)/(beat_length*1000.0);
             //println!("Beat: {}", self.wav_reader.samples::<i16>().next().unwrap().unwrap());
             
@@ -228,7 +259,7 @@ impl event::EventHandler for State {
 
                 
                 //println!("Beat: {}", beat_value);
-                let ce_type = rand::thread_rng().gen_range(0,1);
+                //let ce_type = rand::thread_rng().gen_range(0,1);
 
                 // println!("Startx: {}", frequency);
                 let start_x = (frequency * 100) % 1900;//1900 is "screenwidth"
@@ -243,20 +274,20 @@ impl event::EventHandler for State {
                 //let start_x = (beat_value/5)%1900;//1900 is "screenwidth"
                 
  
-                let new_ce = CursedEntity
+                let new_ce = Beat
                 {
                     img: self.img_beat.clone(),
                     pos_x: start_x as f32,
                     pos_y: 0.0,
                 };
-                self.cursed_entities.push(new_ce);
+                self.beats.push(new_ce);
 
 
                 //println!(" : {}", self.cursed_entities.len());
             }
             
-            let mut remove_entities = vec!();
-            for (i, entity) in self.cursed_entities.iter_mut().enumerate()
+            let mut remove_entities = vec![];
+            for (i, entity) in self.beats.iter_mut().enumerate()
             {
                 if self.music.stopped() //&& entity.pos_y > self.paddle_pos_y - 100.0 //todo: need a system to sync up the first beat
                 {
@@ -290,11 +321,15 @@ impl event::EventHandler for State {
 
             remove_entities.reverse(); 
             for entity_number in remove_entities {
-                self.cursed_entities.remove(entity_number);
+                self.beats.remove(entity_number);
             }
 
             self.dtime = timer::delta(ctx);
-            self.time = self.time.checked_add(self.dtime).unwrap();
+            //println!("DTime: {}", self.dtime.as_millis());
+            if self.dtime.as_millis() < 30//todo this is a hack
+            {
+                self.time = self.time.checked_add(self.dtime).unwrap();
+            }
         }
         //println!(" : {}", self.dtime.subsec_micros());
         
@@ -419,7 +454,7 @@ impl event::EventHandler for State {
         .dest(nalgebra::Point2::new(self.paddle_pos_x, self.paddle_pos_y)))?;
         //.offset(nalgebra::Point2::new(0.5, 0.0)))?;
 
-        for entity in &self.cursed_entities
+        for entity in &self.beats
         {
             entity.img.draw(ctx, DrawParam::default()
             .dest(nalgebra::Point2::new(entity.pos_x, entity.pos_y)))?

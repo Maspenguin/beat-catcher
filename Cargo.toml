@@ -8,3 +8,5 @@ edition = "2018"
 ggez = "0.5"
 rand = "0.6"
 hound = "3.4"
+rustfft = "3.0.0"
+
