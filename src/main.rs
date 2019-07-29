@@ -13,10 +13,6 @@ use ggez::audio;
 use ggez::audio::SoundSource;
 use std::io::BufReader;
 use std::fs::File;
-use rustfft::algorithm::DFT;
-use rustfft::FFT;
-use rustfft::num_complex::Complex;
-use rustfft::num_traits::Zero;
 use hound;
 
 enum GameState
@@ -64,7 +60,7 @@ struct MenuItem
     width: f32,
     height: f32,
     colour: graphics::Color,
-    track_name: String,
+    file_location: String,
     bpm: i32
     
 }
@@ -106,12 +102,12 @@ impl State {
             paddle_pos_y: (graphics::drawable_size(ctx).1 - 130.0) as f32,
             wav_reader: hound::WavReader::open("resources/music/test.wav").unwrap(),//DanceOfTheDecorous(Jazz).wav//WalkStabWalk.wav
             beat_count: 0,
-            music: audio::Source::new(ctx, "/music/DanceOfTheProfane.mp3")?,
+            music: audio::Source::new(ctx, "/music/test.wav")?,
             stage: None,
             menu_items: vec![
-                MenuItem{text: "Dance of the Profane".to_string(), pos_x: 200.0, pos_y: 200.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/DanceOfTheProfane.mp3".to_string(), bpm: 145},
-                MenuItem{text: "Walk-Stab-Walk".to_string(),       pos_x: 200.0, pos_y: 250.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/test.wav".to_string(), bpm: 158},
-                MenuItem{text: "Dance of the Decorous (Jazz)".to_string(), pos_x: 200.0, pos_y: 300.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), track_name: "/music/DanceOfTheDecorous(Jazz).wav".to_string(), bpm: 145}
+                MenuItem{text: "Test".to_string(), pos_x: 200.0, pos_y: 200.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), file_location: "/music/test.wav".to_string(), bpm: 140},
+                MenuItem{text: "Walk-Stab-Walk".to_string(),       pos_x: 200.0, pos_y: 250.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), file_location: "/music/WalkStabWalk.wav".to_string(), bpm: 158},
+                MenuItem{text: "Dance of the Decorous (Jazz)".to_string(), pos_x: 200.0, pos_y: 300.0, width: 200.0, height: 40.0, colour: graphics::Color::new(0.2, 1.0, 0.2, 1.0), file_location: "/music/DanceOfTheDecorous(Jazz).wav".to_string(), bpm: 145}
             ],
             points: vec![],
             samples_per_point: 370//2000//370//499//starts from 0/40//
@@ -139,44 +135,25 @@ impl event::EventHandler for State {
                     {
                         self.game_state = GameState::Game;
                         self.stage = Some(item.clone());
-                        self.music = audio::Source::new(ctx, &item.track_name)?;
+                        self.music = audio::Source::new(ctx, &item.file_location)?;
+                        let path = format!("resources{}", item.file_location);
+                        self.wav_reader = hound::WavReader::open(path).unwrap();
+                        self.beat_count = 0;
+                        self.missed_count = 0;
+                        self.points = vec![];
+                        self.time = std::time::Duration::new(0, 0);
                         self.paddle_pos_y = (graphics::drawable_size(ctx).1 - 130.0) as f32;
-                        
+
                         let mut i = 0;
-                        
                         while i < 2000 //next.is_some()
                         {
                             let next = self.wav_reader.samples::<i16>().nth(self.samples_per_point);
-                            println!("Len: {}", self.wav_reader.samples::<i16>().len());
-                            println!("Len2: {}", self.wav_reader.len());
-                            
-                            self.points.push(nalgebra::Point2::new(i as f32, (500 + (next.unwrap().unwrap()/200)) as f32));//40
+                            //println!("Len: {}", self.wav_reader.samples::<i16>().len());
+                            //println!("Len2: {}", self.wav_reader.len());
+
+                            self.points.push(nalgebra::Point2::new(i as f32, (500 + (next.unwrap().unwrap()/40)) as f32));//40
                             i += 1;
-                        }
-                        let dft = DFT::new(2000, false);
-                        let mut input: Vec<Complex<f32>> = vec![];
-                        for point in &self.points
-                        {
-                            input.push(Complex::new(point.y,0.0));
-                        }
-                        // input[1] = Complex::new(100.0,0.0);
-                        // input[5] = Complex::new(300.0,0.0);
-                        // input[20] = Complex::new(10.0,0.0);
-                        //Zero::zero(); 100
-                        let mut output: Vec<Complex<f32>> = vec![Complex::new(0.0,0.0); 2000];
-                        dft.process(&mut input, &mut output);
-                        //println!("input: {:?}", input);
-                        //println!("output: {:?}", output);
-                        //println!("output: {}", output.len());
-                        // println!("input: {:?}", self.points);
-                        i = 0;
-                        while i < self.points.len()
-                        {
-                            self.points[i] = nalgebra::Point2::new(i as f32, output[i].re+500.0);
-                            i += 1;
-                        }
-                        // println!("output: {:?}", self.points);
-                    
+                        }                   
                     }
                 }
                 else if item.colour == graphics::Color::new(1.0, 1.0, 1.0, 1.0)
@@ -196,7 +173,7 @@ impl event::EventHandler for State {
             
             let required_beats = (self.time.as_millis() as f32)/(beat_length*1000.0);
             //println!("Beat: {}", self.wav_reader.samples::<i16>().next().unwrap().unwrap());
-            
+            let seek_loc = (beat_length * (self.beat_count as f32) * self.wav_reader.spec().sample_rate as f32) as u32;
             if (self.beat_count as f32) < required_beats
             {
                 //create new beat
@@ -204,66 +181,92 @@ impl event::EventHandler for State {
                 // self.wav_reader.seek(((60.0/158.0) * (self.beat_count as f32)) as u32 * self.wav_reader.spec().sample_rate)?;
                 
                 
-                println!("Beatlength: {}", beat_length);
+                //println!("Beatlength: {}", beat_length);
                 println!("Time: {}", self.time.as_millis() as f32/1000.0 );
-                let seek_loc = (beat_length * (self.beat_count as f32) * self.wav_reader.spec().sample_rate as f32) as u32;//todo: this is a bunch slower than the music plays
+                
                 //let seek_loc = ((60*3+29) * (self.wav_reader.spec().sample_rate)) as u32;
-                self.wav_reader.seek(seek_loc)?;
+
+                if seek_loc < self.wav_reader.duration() //there are samples left
+                {
+                    self.wav_reader.seek(seek_loc)?;
+                }
+
+
                 println!("Duration: {}", (self.wav_reader.duration()));
                 println!("SeekLoc: {}", seek_loc);
-                // let mut beat_value = self.wav_reader.samples::<i16>().next().unwrap().unwrap();
+                let mut beat_value = self.wav_reader.samples::<i16>().next().unwrap().unwrap();
                 // if beat_value < 0
                 // {
                 //     beat_value = beat_value *-1;
                 // }
 
-                let mut frequency = 0;
-                //let mut last;
-                //let mut next;
-                frequency = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
-                frequency = frequency.abs();
+                
+
+                println!("left:{}",self.wav_reader.samples::<i16>().len()/2);
+                let mut frequency = 0;// = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
+
+                //frequency = frequency.abs();
+
+                
+                
+
+                //let mut next = self.wav_reader.samples::<i16>().next();
+                let mut next_val = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
+
+                if next_val == 0
+                {
+                    next_val = 1;
+                }
+                let mut polarity =  next_val / next_val.abs(); //1 or -1 depending on if frequency is pos or neg
                 // if self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32 > 0
                 // {
-                //     last = 1;
-                //     while last == 1
-                //     {
-                //         next = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
-                //         //println!("next: {}", next);
-                //         if next > 0
-                //         {
-                //             frequency += 1;
-                //             //println!("Freq: {}", frequency);
-                //         }
-                //         else
-                //         {
-                //             last = -1;
-                //         }
-                //     }                 
-                // }
-                // else
-                // {
-                //     last = -1;
-                //     while last == -1
-                //     {
-                //         next = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
-                //         if next < 0
-                //         {
-                //             frequency += 1;
-                //         }
-                //         else
-                //         {
-                //             last = 1;
-                //         }
-                //     }      
-                // }
+                while next_val/next_val.abs() == polarity
+                {
+                    next_val = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
+                    next_val = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
+                    if next_val == 0
+                    {
+                        next_val = 1;
+                    }
+                }
+                let mut polarity =  next_val / next_val.abs();
+                while next_val/next_val.abs() == polarity && frequency < 500
+                {
+                    //println!("next: {}", next_val);
+                    //println!("next: {}", next);
+                    frequency += 1;
+                    //println!("Freq: {}", frequency);
 
+                    
+                    //let next_option = self.wav_reader.samples::<i16>().next();
+                    //let next_result;
+                    // match next_option
+                    // {
+                    //     Some(x) => next_result = x,
+                    //     None => println!("noresult")
+                    // }
+                    // match next_result
+                    // {
+                    //     Ok(z) => next_val = z as i32,
+                    //     Err(e)=> println!("novalue")
+                    // }
+                    next_val = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
+                    next_val = self.wav_reader.samples::<i16>().next().unwrap().unwrap() as i32;
+                    if next_val == 0
+                    {
+                        next_val = 1;
+                    }
+                }
+
+                println!("freqUpdated:{}",frequency);
                 
                 //println!("Beat: {}", beat_value);
                 //let ce_type = rand::thread_rng().gen_range(0,1);
 
                 // println!("Startx: {}", frequency);
+                
                 let start_x = (frequency * 100) % 1900;//1900 is "screenwidth"
-
+                println!("X: {}",start_x);
 
                 //self.points.push(nalgebra::Point2::new((5*self.beat_count) as f32, (100 + frequency/12) as f32));//for diagram
                 
@@ -272,30 +275,30 @@ impl event::EventHandler for State {
                 
                 // println!("Startx: {}", (beat_value/1000)%1900);
                 //let start_x = (beat_value/5)%1900;//1900 is "screenwidth"
-                
- 
-                let new_ce = Beat
+                if seek_loc < self.wav_reader.duration() //there are samples left
                 {
-                    img: self.img_beat.clone(),
-                    pos_x: start_x as f32,
-                    pos_y: 0.0,
+                    let new_beat = Beat
+                    {
+                        img: self.img_beat.clone(),
+                        pos_x: start_x as f32,
+                        pos_y: 0.0,
+                    };
+                    self.beats.push(new_beat);
                 };
-                self.beats.push(new_ce);
-
 
                 //println!(" : {}", self.cursed_entities.len());
             }
             
-            let mut remove_entities = vec![];
+            let mut remove_beats = vec![];
             for (i, entity) in self.beats.iter_mut().enumerate()
             {
-                if self.music.stopped() //&& entity.pos_y > self.paddle_pos_y - 100.0 //todo: need a system to sync up the first beat
+                if self.music.stopped() && entity.pos_y > self.paddle_pos_y - 120.0 //todo: need a system to sync up the first beat
                 {
                     self.music.play()?;//playtime
                 }
                 if entity.pos_y > graphics::drawable_size(ctx).1 as f32
                 {
-                    remove_entities.push(i);
+                    remove_beats.push(i);
                     self.missed_count += 1;
                 }
                 else
@@ -305,13 +308,13 @@ impl event::EventHandler for State {
                     || rect_collision(entity.pos_x, entity.pos_y, entity.img.width() as f32, entity.img.height() as f32, self.paddle_pos_x + 73.0, self.paddle_pos_y)
                     || rect_collision(entity.pos_x, entity.pos_y, entity.img.width() as f32, entity.img.height() as f32, self.paddle_pos_x + 110.0, self.paddle_pos_y)
                     {
-                        remove_entities.push(i);
+                        remove_beats.push(i);
                     }
                     // if entity.pos_y > (graphics::drawable_size(ctx).1 - 130.0) as f32 && entity.pos_y < (graphics::drawable_size(ctx).1 - 100.0) as f32
                     // {
                     //     if self.paddle_pos_x - 55.0 < entity.pos_x && entity.pos_x < self.paddle_pos_x + 55.0
                     //     {
-                    //         remove_entities.push(i);
+                    //         remove_beats.push(i);
                     //     }
                     // }
 
@@ -319,14 +322,17 @@ impl event::EventHandler for State {
                 }
             }
 
-            remove_entities.reverse(); 
-            for entity_number in remove_entities {
+            remove_beats.reverse(); 
+            for entity_number in remove_beats {
                 self.beats.remove(entity_number);
             }
-
+            if self.beats.len() == 0 && seek_loc > self.wav_reader.duration()
+            {
+                self.game_state = GameState::Menu
+            }
             self.dtime = timer::delta(ctx);
             //println!("DTime: {}", self.dtime.as_millis());
-            if self.dtime.as_millis() < 30//todo this is a hack
+            if self.dtime.as_millis() < 30//todo this is a hack to make it start on time
             {
                 self.time = self.time.checked_add(self.dtime).unwrap();
             }
@@ -442,9 +448,7 @@ impl event::EventHandler for State {
             {
                 graphics::Text::new(self.missed_count.to_string()).draw(ctx, DrawParam::default().dest(nalgebra::Point2::new(45.0, 47.0)))?;
             }
-
         }
-
 
         self.img_town.draw(ctx, DrawParam::default()
         .dest(nalgebra::Point2::new(0.0, graphics::drawable_size(ctx).1 as f32))
