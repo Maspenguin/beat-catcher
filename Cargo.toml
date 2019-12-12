@@ -6,6 +6,5 @@ edition = "2018"
 
 [dependencies]
 ggez = "0.5"
-rand = "0.6"
 hound = "3.4"
 
